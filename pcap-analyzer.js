@@ -8,6 +8,7 @@ class PcapAnalyzer {
         this.totalPages = 1;
         this.selectedPacketRow = null;
         this.currentDetailsRow = null;
+        this.tcpStreams = [];
         this.initializeEventListeners();
     }
 
@@ -17,6 +18,7 @@ class PcapAnalyzer {
         const searchBtn = document.getElementById('searchBtn');
         const clearBtn = document.getElementById('clearBtn');
         const helpBtn = document.getElementById('helpBtn');
+        const tcpStreamBtn = document.getElementById('tcpStreamBtn');
         const exportBtn = document.getElementById('exportBtn');
         const searchBox = document.getElementById('searchBox');
 
@@ -29,6 +31,12 @@ class PcapAnalyzer {
         const gotoBtn = document.getElementById('gotoBtn');
         const gotoPage = document.getElementById('gotoPage');
 
+        // TCP Stream 관련 요소들
+        const closeTcpStreamModal = document.getElementById('closeTcpStreamModal');
+        const streamSelect = document.getElementById('streamSelect');
+        const saveStreamBtn = document.getElementById('saveStreamBtn');
+        const streamViewRadios = document.getElementsByName('streamView');
+
         uploadArea.addEventListener('click', () => fileInput.click());
         uploadArea.addEventListener('dragover', this.handleDragOver.bind(this));
         uploadArea.addEventListener('dragleave', this.handleDragLeave.bind(this));
@@ -38,6 +46,7 @@ class PcapAnalyzer {
         searchBtn.addEventListener('click', this.handleSearch.bind(this));
         clearBtn.addEventListener('click', this.handleClear.bind(this));
         helpBtn.addEventListener('click', this.toggleSearchHelp.bind(this));
+        tcpStreamBtn.addEventListener('click', this.openTcpStreamAnalysis.bind(this));
         exportBtn.addEventListener('click', this.handleExport.bind(this));
         
         searchBox.addEventListener('keypress', (e) => {
@@ -54,6 +63,15 @@ class PcapAnalyzer {
         gotoPage.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.handleGotoPage();
         });
+
+        // TCP Stream 이벤트 리스너
+        closeTcpStreamModal.addEventListener('click', this.closeTcpStreamModal.bind(this));
+        streamSelect.addEventListener('change', this.handleStreamSelect.bind(this));
+        saveStreamBtn.addEventListener('click', this.saveCurrentStream.bind(this));
+        
+        for (const radio of streamViewRadios) {
+            radio.addEventListener('change', this.updateStreamView.bind(this));
+        }
     }
 
     handleDragOver(e) {
@@ -109,6 +127,9 @@ class PcapAnalyzer {
                 this.showError('파일에서 패킷을 찾을 수 없습니다. 파일이 손상되었거나 지원되지 않는 형식일 수 있습니다.');
                 return;
             }
+            
+            // TCP Stream 분석
+            this.analyzeTcpStreams();
             
             this.displayFileInfo(file);
             this.displayStats();
@@ -1469,34 +1490,144 @@ ${hexDump}`;
     }
 
     handleExport() {
+        // 사용자에게 내보내기 형식 선택하도록 함
+        const format = this.selectExportFormat();
+        
+        if (format === 'csv') {
+            this.exportAsCSV();
+        } else if (format === 'json') {
+            this.exportAsJSON();
+        } else if (format === 'txt') {
+            this.exportAsText();
+        }
+    }
+
+    selectExportFormat() {
+        const choice = prompt(
+            "내보내기 형식을 선택하세요:\n" +
+            "1 - CSV (Excel 호환)\n" + 
+            "2 - JSON\n" +
+            "3 - 텍스트\n" +
+            "\n번호를 입력하세요 (기본값: 1):"
+        );
+        
+        switch (choice) {
+            case '2': return 'json';
+            case '3': return 'txt';
+            default: return 'csv';
+        }
+    }
+
+    exportAsCSV() {
         const csvContent = this.generateCSV();
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        // UTF-8 BOM 추가하여 Excel에서 한글이 올바르게 표시되도록 함
+        const BOM = '\uFEFF';
+        const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `pcap_analysis_${new Date().toISOString().slice(0, 10)}.csv`;
         link.click();
+        URL.revokeObjectURL(link.href);
+    }
+
+    exportAsJSON() {
+        const jsonData = {
+            exportInfo: {
+                filename: this.currentFile?.name || 'unknown',
+                exportDate: new Date().toISOString(),
+                totalPackets: this.packets.length,
+                filteredPackets: this.filteredPackets.length
+            },
+            packets: this.filteredPackets.map((packet, index) => ({
+                number: index + 1,
+                timestamp: this.formatTimestampWithMicroseconds(packet.timestamp),
+                timestampISO: packet.timestamp.toISOString(),
+                sourceIP: packet.parsed.srcIP,
+                destinationIP: packet.parsed.destIP,
+                sourceMAC: packet.parsed.srcMac,
+                destinationMAC: packet.parsed.destMac,
+                protocol: packet.parsed.protocol,
+                size: packet.parsed.size,
+                info: packet.parsed.info,
+                capturedLength: packet.capturedLength,
+                originalLength: packet.originalLength
+            }))
+        };
+
+        const jsonContent = JSON.stringify(jsonData, null, 2);
+        const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `pcap_analysis_${new Date().toISOString().slice(0, 10)}.json`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }
+
+    exportAsText() {
+        let textContent = `PCAP 파일 분석 결과\n`;
+        textContent += `파일명: ${this.currentFile?.name || 'unknown'}\n`;
+        textContent += `내보내기 날짜: ${new Date().toLocaleString()}\n`;
+        textContent += `총 패킷 수: ${this.packets.length}\n`;
+        textContent += `필터된 패킷 수: ${this.filteredPackets.length}\n`;
+        textContent += '='.repeat(100) + '\n\n';
+
+        this.filteredPackets.forEach((packet, index) => {
+            textContent += `패킷 #${index + 1}\n`;
+            textContent += `  시간: ${this.formatTimestampWithMicroseconds(packet.timestamp)}\n`;
+            textContent += `  소스: ${packet.parsed.srcIP || packet.parsed.srcMac}\n`;
+            textContent += `  목적지: ${packet.parsed.destIP || packet.parsed.destMac}\n`;
+            textContent += `  프로토콜: ${packet.parsed.protocol}\n`;
+            textContent += `  크기: ${packet.parsed.size} bytes\n`;
+            textContent += `  정보: ${packet.parsed.info}\n`;
+            textContent += '-'.repeat(80) + '\n';
+        });
+
+        const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `pcap_analysis_${new Date().toISOString().slice(0, 10)}.txt`;
+        link.click();
+        URL.revokeObjectURL(link.href);
     }
 
     generateCSV() {
         const headers = ['번호', '시간', '소스IP', '목적지IP', '소스MAC', '목적지MAC', '프로토콜', '크기', '정보'];
-        const rows = [headers.join(',')];
         
+        // CSV 셀 값을 안전하게 이스케이프하는 함수
+        const escapeCsvValue = (value) => {
+            if (value === null || value === undefined) return '';
+            
+            const stringValue = String(value);
+            
+            // 쉼표, 줄바꿈, 따옴표가 포함된 경우 따옴표로 감싸고 내부 따옴표는 이중화
+            if (stringValue.includes(',') || stringValue.includes('\n') || stringValue.includes('\r') || stringValue.includes('"')) {
+                return `"${stringValue.replace(/"/g, '""')}"`;
+            }
+            
+            return stringValue;
+        };
+        
+        // 헤더 행 생성
+        const csvRows = [headers.map(escapeCsvValue).join(',')];
+        
+        // 데이터 행 생성
         this.filteredPackets.forEach((packet, index) => {
             const row = [
                 index + 1,
-                packet.timestamp.toISOString(),
-                `"${packet.parsed.srcIP}"`,
-                `"${packet.parsed.destIP}"`,
-                `"${packet.parsed.srcMac}"`,
-                `"${packet.parsed.destMac}"`,
-                `"${packet.parsed.protocol}"`,
-                packet.parsed.size,
-                `"${packet.parsed.info.replace(/"/g, '""')}"`
+                this.formatTimestampWithMicroseconds(packet.timestamp),
+                packet.parsed.srcIP || '',
+                packet.parsed.destIP || '',
+                packet.parsed.srcMac || '',
+                packet.parsed.destMac || '',
+                packet.parsed.protocol || '',
+                packet.parsed.size || 0,
+                packet.parsed.info || ''
             ];
-            rows.push(row.join(','));
+            
+            csvRows.push(row.map(escapeCsvValue).join(','));
         });
         
-        return rows.join('\n');
+        return csvRows.join('\r\n'); // Windows 스타일 줄바꿈 사용
     }
 
     showAnalysisSection() {
@@ -1515,6 +1646,381 @@ ${hexDump}`;
 
     hideError() {
         document.getElementById('errorMessage').style.display = 'none';
+    }
+
+    analyzeTcpStreams() {
+        console.log('Analyzing TCP streams...');
+        this.tcpStreams = [];
+        const streamMap = new Map();
+
+        // TCP 패킷만 필터링하고 스트림별로 그룹화
+        this.packets.forEach((packet, index) => {
+            if (packet.parsed.protocol === 'TCP') {
+                const tcpInfo = this.extractTcpInfo(packet);
+                if (tcpInfo) {
+                    const streamKey = this.getTcpStreamKey(tcpInfo);
+                    
+                    if (!streamMap.has(streamKey)) {
+                        streamMap.set(streamKey, {
+                            id: streamMap.size,
+                            key: streamKey,
+                            srcIP: tcpInfo.srcIP,
+                            srcPort: tcpInfo.srcPort,
+                            destIP: tcpInfo.destIP,
+                            destPort: tcpInfo.destPort,
+                            packets: [],
+                            totalBytes: 0,
+                            startTime: packet.timestamp,
+                            endTime: packet.timestamp
+                        });
+                    }
+
+                    const stream = streamMap.get(streamKey);
+                    stream.packets.push({
+                        index,
+                        packet,
+                        tcpInfo,
+                        direction: this.getTcpDirection(tcpInfo, stream),
+                        data: this.extractTcpData(packet, tcpInfo)
+                    });
+                    
+                    stream.totalBytes += tcpInfo.dataLength || 0;
+                    stream.endTime = packet.timestamp;
+                }
+            }
+        });
+
+        this.tcpStreams = Array.from(streamMap.values())
+            .filter(stream => stream.packets.length > 1) // 최소 2개 패킷 이상
+            .sort((a, b) => a.startTime - b.startTime);
+
+        console.log(`Found ${this.tcpStreams.length} TCP streams`);
+    }
+
+    extractTcpInfo(packet) {
+        try {
+            const parsed = packet.parsed;
+            if (!parsed.srcIP || !parsed.destIP) return null;
+
+            // TCP 정보를 패킷 정보에서 추출
+            const info = parsed.info;
+            const tcpMatch = info.match(/TCP (\d+) → (\d+)/);
+            
+            if (tcpMatch) {
+                return {
+                    srcIP: parsed.srcIP,
+                    destIP: parsed.destIP,
+                    srcPort: parseInt(tcpMatch[1]),
+                    destPort: parseInt(tcpMatch[2]),
+                    flags: this.parseTcpFlags(info),
+                    dataLength: this.estimateTcpDataLength(packet)
+                };
+            }
+            return null;
+        } catch (error) {
+            console.error('Error extracting TCP info:', error);
+            return null;
+        }
+    }
+
+    parseTcpFlags(info) {
+        const flags = [];
+        if (info.includes('SYN')) flags.push('SYN');
+        if (info.includes('ACK')) flags.push('ACK');
+        if (info.includes('FIN')) flags.push('FIN');
+        if (info.includes('RST')) flags.push('RST');
+        if (info.includes('PSH')) flags.push('PSH');
+        if (info.includes('URG')) flags.push('URG');
+        return flags;
+    }
+
+    estimateTcpDataLength(packet) {
+        // TCP 헤더는 보통 20바이트, 이더넷 헤더 14바이트, IP 헤더 20바이트
+        const headerSize = 54; // 추정값
+        return Math.max(0, packet.capturedLength - headerSize);
+    }
+
+    getTcpStreamKey(tcpInfo) {
+        // 양방향 스트림을 하나로 식별하기 위해 정렬된 키 생성
+        const endpoint1 = `${tcpInfo.srcIP}:${tcpInfo.srcPort}`;
+        const endpoint2 = `${tcpInfo.destIP}:${tcpInfo.destPort}`;
+        return endpoint1 < endpoint2 ? `${endpoint1}-${endpoint2}` : `${endpoint2}-${endpoint1}`;
+    }
+
+    getTcpDirection(tcpInfo, stream) {
+        // 첫 번째 패킷의 방향을 client로 설정
+        if (stream.packets.length === 0) return 'client';
+        
+        const firstPacket = stream.packets[0].tcpInfo;
+        const isClientToServer = (tcpInfo.srcIP === firstPacket.srcIP && tcpInfo.srcPort === firstPacket.srcPort);
+        return isClientToServer ? 'client' : 'server';
+    }
+
+    extractTcpData(packet, tcpInfo) {
+        // 실제 TCP 데이터 추출 (간단한 추정)
+        if (tcpInfo.dataLength <= 0) return new Uint8Array(0);
+        
+        const headerSize = 54; // 추정값
+        if (packet.data.length > headerSize) {
+            return packet.data.slice(headerSize);
+        }
+        return new Uint8Array(0);
+    }
+
+    openTcpStreamAnalysis() {
+        if (this.tcpStreams.length === 0) {
+            alert('TCP 스트림이 발견되지 않았습니다. TCP 패킷이 포함된 캡처 파일을 분석해주세요.');
+            return;
+        }
+
+        // 스트림 목록 업데이트
+        const streamSelect = document.getElementById('streamSelect');
+        streamSelect.innerHTML = '<option value="">스트림을 선택하세요</option>';
+        
+        this.tcpStreams.forEach(stream => {
+            const option = document.createElement('option');
+            option.value = stream.id;
+            option.textContent = `Stream ${stream.id}: ${stream.srcIP}:${stream.srcPort} ↔ ${stream.destIP}:${stream.destPort} (${stream.packets.length} packets, ${stream.totalBytes} bytes)`;
+            streamSelect.appendChild(option);
+        });
+
+        // 모달 표시
+        document.getElementById('tcpStreamModal').style.display = 'flex';
+    }
+
+    closeTcpStreamModal() {
+        document.getElementById('tcpStreamModal').style.display = 'none';
+    }
+
+    handleStreamSelect() {
+        const streamSelect = document.getElementById('streamSelect');
+        const streamId = parseInt(streamSelect.value);
+        
+        if (isNaN(streamId)) {
+            document.getElementById('streamData').textContent = 'TCP 스트림을 선택하면 여기에 데이터가 표시됩니다.';
+            document.getElementById('streamInfo').textContent = '';
+            return;
+        }
+
+        const stream = this.tcpStreams[streamId];
+        if (stream) {
+            const info = `${stream.packets.length} packets, ${stream.totalBytes} bytes, ${((stream.endTime - stream.startTime) / 1000).toFixed(2)}s duration`;
+            document.getElementById('streamInfo').textContent = info;
+            this.updateStreamView();
+        }
+    }
+
+    updateStreamView() {
+        const streamSelect = document.getElementById('streamSelect');
+        const streamId = parseInt(streamSelect.value);
+        
+        if (isNaN(streamId)) return;
+        
+        const stream = this.tcpStreams[streamId];
+        if (!stream) return;
+
+        const viewMode = document.querySelector('input[name="streamView"]:checked').value;
+        const streamData = document.getElementById('streamData');
+        
+        let content = '';
+        
+        switch (viewMode) {
+            case 'ascii':
+                content = this.generateAsciiView(stream);
+                break;
+            case 'hex':
+                content = this.generateHexView(stream);
+                break;
+            case 'raw':
+                content = this.generateRawView(stream);
+                break;
+        }
+        
+        streamData.innerHTML = content;
+    }
+
+    generateAsciiView(stream) {
+        let html = '';
+        
+        stream.packets.forEach((streamPacket, index) => {
+            if (streamPacket.data.length > 0) {
+                const direction = streamPacket.direction;
+                const timestamp = streamPacket.packet.timestamp.toLocaleTimeString();
+                const ascii = this.bytesToAscii(streamPacket.data);
+                
+                html += `<div class="stream-packet ${direction}">`;
+                html += `<div class="stream-packet-header">${direction.toUpperCase()} → Packet #${streamPacket.index + 1} (${timestamp}) - ${streamPacket.data.length} bytes</div>`;
+                html += `<div class="stream-packet-data">${this.escapeHtml(ascii)}</div>`;
+                html += `</div>`;
+            }
+        });
+        
+        return html || '<div>이 스트림에는 표시할 데이터가 없습니다.</div>';
+    }
+
+    generateHexView(stream) {
+        let html = '';
+        
+        stream.packets.forEach((streamPacket, index) => {
+            if (streamPacket.data.length > 0) {
+                const direction = streamPacket.direction;
+                const timestamp = streamPacket.packet.timestamp.toLocaleTimeString();
+                const hexDump = this.createHexDump(streamPacket.data);
+                
+                html += `<div class="stream-packet ${direction}">`;
+                html += `<div class="stream-packet-header">${direction.toUpperCase()} → Packet #${streamPacket.index + 1} (${timestamp}) - ${streamPacket.data.length} bytes</div>`;
+                html += `<div class="stream-packet-data">${hexDump}</div>`;
+                html += `</div>`;
+            }
+        });
+        
+        return html || '<div>이 스트림에는 표시할 데이터가 없습니다.</div>';
+    }
+
+    generateRawView(stream) {
+        let combinedData = new Uint8Array(0);
+        
+        stream.packets.forEach(streamPacket => {
+            if (streamPacket.data.length > 0) {
+                const newData = new Uint8Array(combinedData.length + streamPacket.data.length);
+                newData.set(combinedData);
+                newData.set(streamPacket.data, combinedData.length);
+                combinedData = newData;
+            }
+        });
+        
+        const hexDump = this.createHexDump(combinedData);
+        return `<div class="stream-packet"><div class="stream-packet-data">${hexDump}</div></div>`;
+    }
+
+    bytesToAscii(data) {
+        let result = '';
+        for (let i = 0; i < data.length; i++) {
+            const byte = data[i];
+            if (byte >= 32 && byte <= 126) {
+                result += String.fromCharCode(byte);
+            } else if (byte === 10) {
+                result += '\n';
+            } else if (byte === 13) {
+                result += '\r';
+            } else if (byte === 9) {
+                result += '\t';
+            } else {
+                result += '.';
+            }
+        }
+        return result;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    saveCurrentStream() {
+        const streamSelect = document.getElementById('streamSelect');
+        const streamId = parseInt(streamSelect.value);
+        
+        if (isNaN(streamId)) {
+            alert('저장할 스트림을 선택해주세요.');
+            return;
+        }
+
+        const stream = this.tcpStreams[streamId];
+        const viewMode = document.querySelector('input[name="streamView"]:checked').value;
+        
+        let content = '';
+        let filename = `tcp_stream_${streamId}_${stream.srcIP}_${stream.srcPort}-${stream.destIP}_${stream.destPort}`;
+        
+        switch (viewMode) {
+            case 'ascii':
+                content = this.generateAsciiViewForSave(stream);
+                filename += '.txt';
+                break;
+            case 'hex':
+                content = this.generateHexViewForSave(stream);
+                filename += '.hex';
+                break;
+            case 'raw':
+                content = this.generateRawDataForSave(stream);
+                filename += '.bin';
+                break;
+        }
+        
+        this.downloadFile(content, filename, viewMode === 'raw' ? 'application/octet-stream' : 'text/plain');
+    }
+
+    generateAsciiViewForSave(stream) {
+        let content = `TCP Stream ${stream.id}: ${stream.srcIP}:${stream.srcPort} ↔ ${stream.destIP}:${stream.destPort}\n`;
+        content += `Packets: ${stream.packets.length}, Bytes: ${stream.totalBytes}\n`;
+        content += `Duration: ${((stream.endTime - stream.startTime) / 1000).toFixed(2)}s\n`;
+        content += '='.repeat(80) + '\n\n';
+        
+        stream.packets.forEach((streamPacket, index) => {
+            if (streamPacket.data.length > 0) {
+                content += `[${streamPacket.direction.toUpperCase()}] Packet #${streamPacket.index + 1} (${streamPacket.packet.timestamp.toISOString()}) - ${streamPacket.data.length} bytes\n`;
+                content += this.bytesToAscii(streamPacket.data) + '\n\n';
+            }
+        });
+        
+        return content;
+    }
+
+    generateHexViewForSave(stream) {
+        let content = `TCP Stream ${stream.id}: ${stream.srcIP}:${stream.srcPort} ↔ ${stream.destIP}:${stream.destPort}\n`;
+        content += '='.repeat(80) + '\n\n';
+        
+        stream.packets.forEach((streamPacket, index) => {
+            if (streamPacket.data.length > 0) {
+                content += `[${streamPacket.direction.toUpperCase()}] Packet #${streamPacket.index + 1}\n`;
+                content += this.createHexDump(streamPacket.data) + '\n\n';
+            }
+        });
+        
+        return content;
+    }
+
+    generateRawDataForSave(stream) {
+        let combinedData = new Uint8Array(0);
+        
+        stream.packets.forEach(streamPacket => {
+            if (streamPacket.data.length > 0) {
+                const newData = new Uint8Array(combinedData.length + streamPacket.data.length);
+                newData.set(combinedData);
+                newData.set(streamPacket.data, combinedData.length);
+                combinedData = newData;
+            }
+        });
+        
+        return combinedData;
+    }
+
+    downloadFile(content, filename, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }
+
+    formatTimestampWithMicroseconds(timestamp) {
+        // JavaScript Date 객체에서 마이크로세컨드 추출
+        const milliseconds = timestamp.getMilliseconds();
+        
+        // YYYY-MM-DD HH:mm:ss.ffffff 형식으로 포맷팅
+        const year = timestamp.getFullYear();
+        const month = String(timestamp.getMonth() + 1).padStart(2, '0');
+        const day = String(timestamp.getDate()).padStart(2, '0');
+        const hours = String(timestamp.getHours()).padStart(2, '0');
+        const minutes = String(timestamp.getMinutes()).padStart(2, '0');
+        const seconds = String(timestamp.getSeconds()).padStart(2, '0');
+        
+        // 마이크로세컨드는 밀리세컨드에서 추정 (3자리 + 3자리 0으로 패딩)
+        const microseconds = String(milliseconds).padStart(3, '0') + '000';
+        
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${microseconds}`;
     }
 }
 
