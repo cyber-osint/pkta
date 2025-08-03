@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PCAP 파일 분석기</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #2c3e50;
+        }
+
+        .upload-area {
+            border: 3px dashed #3498db;
+            border-radius: 10px;
+            padding: 60px 20px;
+            text-align: center;
+            background: white;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-area:hover {
+            border-color: #2980b9;
+            background: #f8f9fa;
+        }
+
+        .upload-area.dragover {
+            border-color: #27ae60;
+            background: #e8f5e8;
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            color: #3498db;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            font-size: 18px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            font-size: 14px;
+            color: #999;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .analysis-section {
+            display: none;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .file-info {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #7f8c8d;
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 200px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .packets-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .packets-table th,
+        .packets-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .packets-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+
+        .packets-table tr:hover {
+            background: #f5f5f5;
+        }
+
+        .packets-table tr.selected {
+            background: #e3f2fd;
+        }
+
+        .packet-details-row {
+            background: #f8f9fa;
+            border-left: 4px solid #3498db;
+        }
+
+        .packet-details-row td {
+            padding: 0;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .packet-details-content {
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            margin: 10px;
+        }
+
+        .packet-details-header {
+            background: #3498db;
+            color: white;
+            padding: 10px 20px;
+            margin: 10px 10px 0 10px;
+            border-radius: 4px 4px 0 0;
+            font-weight: bold;
+        }
+
+        .close-details {
+            float: right;
+            cursor: pointer;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .close-details:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .packet-details {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border-left: 4px solid #3498db;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #3498db;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .error-message {
+            background: #e74c3c;
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+
+        .search-help {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+
+        .search-help h4 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+
+        .help-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .help-section h5 {
+            color: #34495e;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #ecf0f1;
+            padding-bottom: 5px;
+        }
+
+        .help-section ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .help-section li {
+            padding: 5px 0;
+            border-bottom: 1px solid #f8f9fa;
+        }
+
+        .help-section code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'JetBrains Mono', monospace;
+            color: #e83e8c;
+        }
+
+        .pagination-info {
+            padding: 10px 0;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .pagination-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-top: 1px solid #dee2e6;
+            margin-top: 20px;
+        }
+
+        .pagination-left,
+        .pagination-center,
+        .pagination-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .page-size-select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .page-info {
+            padding: 0 15px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .goto-page {
+            width: 80px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .pagination-controls .btn {
+            padding: 8px 15px;
+            font-size: 13px;
+        }
+
+        .pagination-controls .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .tcp-stream-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .tcp-stream-modal-content {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            height: 80%;
+            max-width: 1200px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .tcp-stream-header {
+            background: #2c3e50;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 3px;
+        }
+
+        .close-modal:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .tcp-stream-controls {
+            padding: 15px 20px;
+            border-bottom: 1px solid #ddd;
+            background: #f8f9fa;
+        }
+
+        .stream-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .stream-select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            min-width: 200px;
+        }
+
+        .stream-info {
+            color: #666;
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stream-options {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .stream-options label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+
+        .tcp-stream-content {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stream-data {
+            flex: 1;
+            padding: 20px;
+            overflow: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            background: #f8f9fa;
+        }
+
+        .stream-packet {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #ccc;
+        }
+
+        .stream-packet.client {
+            background: #e3f2fd;
+            border-left-color: #2196F3;
+        }
+
+        .stream-packet.server {
+            background: #f3e5f5;
+            border-left-color: #9C27B0;
+        }
+
+        .stream-packet-header {
+            font-weight: bold;
+            margin-bottom: 5px;
+            font-size: 11px;
+            color: #666;
+        }
+
+        .stream-packet-data {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        @media (max-width: 768px) {
+            .pagination-controls {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .help-content {
+                grid-template-columns: 1fr;
+            }
+
+            .tcp-stream-modal-content {
+                width: 95%;
+                height: 90%;
+            }
+
+            .stream-options {
+                flex-wrap: wrap;
+            }
+        }
+
+        .http-analysis-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .http-analysis-modal-content {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            height: 85%;
+            max-width: 1400px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .http-analysis-header {
+            background: #27ae60;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .http-analysis-controls {
+            padding: 15px 20px;
+            border-bottom: 1px solid #ddd;
+            background: #f8f9fa;
+        }
+
+        .http-session-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .session-select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            min-width: 300px;
+        }
+
+        .session-info {
+            color: #666;
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .http-view-options {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .http-view-options label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+
+        .http-analysis-content {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .http-data {
+            flex: 1;
+            padding: 20px;
+            overflow: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            background: #f8f9fa;
+        }
+
+        .http-request, .http-response {
+            margin: 15px 0;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #ccc;
+        }
+
+        .http-request {
+            background: #e8f5e8;
+            border-left-color: #27ae60;
+        }
+
+        .http-response {
+            background: #fff3cd;
+            border-left-color: #ffc107;
+        }
+
+        .http-message-header {
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        .http-message-content {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        .http-headers {
+            background: #f1f3f4;
+            padding: 10px;
+            border-radius: 3px;
+            margin: 10px 0;
+        }
+
+        .http-body {
+            background: #ffffff;
+            padding: 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 3px;
+            margin: 10px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .http-summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+
+        .http-summary-table th,
+        .http-summary-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+
+        .http-summary-table th {
+            background: #f8f9fa;
+            font-weight: bold;
+        }
+
+        .http-method {
+            color: #007bff;
+            font-weight: bold;
+        }
+
+        .http-status-code {
+            font-weight: bold;
+        }
+
+        .http-status-200 { color: #28a745; }
+        .http-status-300 { color: #ffc107; }
+        .http-status-400 { color: #dc3545; }
+        .http-status-500 { color: #6f42c1; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 PCAP 파일 분석기</h1>
+        
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">PCAP 파일을 여기에 드래그하거나 클릭하여 선택하세요</div>
+            <div class="upload-hint">지원 형식: .pcap, .cap, .pcapng (모든 PCAP 변형 지원)</div>
+            <input type="file" class="file-input" id="fileInput" accept=".pcap,.cap,.pcapng">
+        </div>
+
+        <div class="analysis-section" id="analysisSection">
+            <div class="file-info" id="fileInfo"></div>
+            
+            <div class="stats" id="stats"></div>
+
+            <div class="controls">
+                <input type="text" class="search-box" id="searchBox" placeholder="패킷 검색 (예: ip:192.168.1.1, port:80, protocol:TCP)">
+                <button class="btn btn-primary" id="searchBtn">검색</button>
+                <button class="btn btn-secondary" id="clearBtn">초기화</button>
+                <button class="btn btn-secondary" id="helpBtn">검색 도움말</button>
+                <button class="btn btn-secondary" id="tcpStreamBtn">TCP Stream 분석</button>
+                <button class="btn btn-secondary" id="httpAnalysisBtn">HTTP 분석</button>
+                <button class="btn btn-secondary" id="exportBtn">결과 내보내기</button>
+            </div>
+
+            <div class="search-help" id="searchHelp" style="display: none;">
+                <h4>🔍 검색 문법 도움말</h4>
+                <div class="help-content">
+                    <div class="help-section">
+                        <h5>기본 검색:</h5>
+                        <ul>
+                            <li><code>192.168.1.1</code> - IP 주소로 검색</li>
+                            <li><code>TCP</code> - 프로토콜로 검색</li>
+                            <li><code>80</code> - 포트 번호로 검색</li>
+                        </ul>
+                    </div>
+                    <div class="help-section">
+                        <h5>필드별 검색:</h5>
+                        <ul>
+                            <li><code>src:192.168.1.1</code> - 소스 IP</li>
+                            <li><code>dst:192.168.1.100</code> - 목적지 IP</li>
+                            <li><code>protocol:TCP</code> - 특정 프로토콜</li>
+                            <li><code>port:80</code> - 특정 포트</li>
+                            <li><code>size:>1000</code> - 크기 조건 (>, <, =)</li>
+                        </ul>
+                    </div>
+                    <div class="help-section">
+                        <h5>조합 검색:</h5>
+                        <ul>
+                            <li><code>src:192.168.1.1 AND dst:192.168.1.100</code></li>
+                            <li><code>protocol:TCP OR protocol:UDP</code></li>
+                            <li><code>port:80 OR port:443</code></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div id="loadingIndicator" class="loading" style="display: none;">
+                파일을 분석하는 중입니다...
+            </div>
+
+            <div class="pagination-info" id="paginationInfo"></div>
+            
+            <div class="packets-container">
+                <table class="packets-table" id="packetsTable">
+                    <thead>
+                        <tr>
+                            <th>번호</th>
+                            <th>시간</th>
+                            <th>소스</th>
+                            <th>목적지</th>
+                            <th>프로토콜</th>
+                            <th>크기</th>
+                            <th>정보</th>
+                        </tr>
+                    </thead>
+                    <tbody id="packetsBody">
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pagination-controls" id="paginationControls">
+                <div class="pagination-left">
+                    <select id="pageSize" class="page-size-select">
+                        <option value="50">50개씩 보기</option>
+                        <option value="100" selected>100개씩 보기</option>
+                        <option value="250">250개씩 보기</option>
+                        <option value="500">500개씩 보기</option>
+                        <option value="1000">1000개씩 보기</option>
+                    </select>
+                </div>
+                <div class="pagination-center">
+                    <button class="btn btn-secondary" id="firstPageBtn">처음</button>
+                    <button class="btn btn-secondary" id="prevPageBtn">이전</button>
+                    <span class="page-info" id="pageInfo">1 / 1</span>
+                    <button class="btn btn-secondary" id="nextPageBtn">다음</button>
+                    <button class="btn btn-secondary" id="lastPageBtn">마지막</button>
+                </div>
+                <div class="pagination-right">
+                    <input type="number" id="gotoPage" class="goto-page" placeholder="페이지" min="1">
+                    <button class="btn btn-primary" id="gotoBtn">이동</button>
+                </div>
+            </div>
+
+            <!-- 기존 패킷 상세 정보는 숨김 처리 -->
+            <div class="packet-details" id="packetDetails" style="display: none;">
+                <h3>패킷 상세 정보</h3>
+                <pre id="packetDetailsContent"></pre>
+            </div>
+        </div>
+
+        <!-- TCP Stream 분석 모달 -->
+        <div class="tcp-stream-modal" id="tcpStreamModal" style="display: none;">
+            <div class="tcp-stream-modal-content">
+                <div class="tcp-stream-header">
+                    <h3>🔀 TCP Stream 분석</h3>
+                    <button class="close-modal" id="closeTcpStreamModal">✕</button>
+                </div>
+                
+                <div class="tcp-stream-controls">
+                    <div class="stream-selector">
+                        <label for="streamSelect">TCP Stream:</label>
+                        <select id="streamSelect" class="stream-select">
+                            <option value="">스트림을 선택하세요</option>
+                        </select>
+                        <span class="stream-info" id="streamInfo"></span>
+                    </div>
+                    
+                    <div class="stream-options">
+                        <label>
+                            <input type="radio" name="streamView" value="ascii" checked> ASCII
+                        </label>
+                        <label>
+                            <input type="radio" name="streamView" value="hex"> Hex Dump
+                        </label>
+                        <label>
+                            <input type="radio" name="streamView" value="raw"> Raw
+                        </label>
+                        <button class="btn btn-secondary" id="saveStreamBtn">스트림 저장</button>
+                    </div>
+                </div>
+                
+                <div class="tcp-stream-content">
+                    <div class="stream-data" id="streamData">
+                        TCP 스트림을 선택하면 여기에 데이터가 표시됩니다.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HTTP 분석 모달 -->
+        <div class="http-analysis-modal" id="httpAnalysisModal" style="display: none;">
+            <div class="http-analysis-modal-content">
+                <div class="http-analysis-header">
+                    <h3>🌐 HTTP 트래픽 분석</h3>
+                    <button class="close-modal" id="closeHttpAnalysisModal">✕</button>
+                </div>
+                
+                <div class="http-analysis-controls">
+                    <div class="http-session-selector">
+                        <label for="httpSessionSelect">HTTP 세션:</label>
+                        <select id="httpSessionSelect" class="session-select">
+                            <option value="">세션을 선택하세요</option>
+                        </select>
+                        <span class="session-info" id="httpSessionInfo"></span>
+                    </div>
+                    
+                    <div class="http-view-options">
+                        <label>
+                            <input type="radio" name="httpView" value="summary" checked> 요약
+                        </label>
+                        <label>
+                            <input type="radio" name="httpView" value="headers"> 헤더
+                        </label>
+                        <label>
+                            <input type="radio" name="httpView" value="body"> 바디
+                        </label>
+                        <label>
+                            <input type="radio" name="httpView" value="raw"> 전체
+                        </label>
+                        <button class="btn btn-secondary" id="saveHttpBtn">HTTP 세션 저장</button>
+                    </div>
+                </div>
+                
+                <div class="http-analysis-content">
+                    <div class="http-data" id="httpData">
+                        HTTP 세션을 선택하면 여기에 데이터가 표시됩니다.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="errorMessage" class="error-message" style="display: none;"></div>
+    </div>
+
+    <script src="pcap-analyzer.js"></script>
+</body>
+</html>
